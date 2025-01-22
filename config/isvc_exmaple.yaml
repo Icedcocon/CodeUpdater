@@ -1,0 +1,49 @@
+apiVersion: serving.kserve.io/v1beta1
+kind: InferenceService
+metadata:
+  name: example-transformer
+  namespace: default
+  annotations:
+    serving.kserve.io/deploymentMode: RawDeployment  # 添加此注解
+spec:
+  predictor:
+    containers:
+      - name: kserve-container
+        image: nginx:alpine  # 使用轻量级的nginx镜像替代
+        ports:
+          - containerPort: 80  # 添加端口配置
+        volumeMounts:
+          - name: model-storage
+            mountPath: "/mnt/models"
+        resources:
+          requests:
+            cpu: 100m
+            memory: 100Mi
+          limits:
+            cpu: 100m
+            memory: 100Mi
+    volumes:
+      - name: model-storage
+        hostPath:
+          path: "/data/models"
+          type: DirectoryOrCreate
+  transformer:
+    containers:
+      - name: kserve-container
+        image: nginx:alpine
+        ports:
+          - containerPort: 80
+        command: ["/bin/sh"]
+        args: ["-c", "nginx -g 'daemon off;'"]  # 使用正确的nginx启动命令
+        resources:
+          requests:
+            cpu: 100m
+            memory: 100Mi
+          limits:
+            cpu: 100m
+            memory: 100Mi
+    volumes:
+      - name: transformer-config
+        hostPath:
+          path: "/data/transformer-config"
+          type: DirectoryOrCreate
