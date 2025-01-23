@@ -28,6 +28,7 @@ import (
 
 	kservev1beta1 "github.com/kserve/kserve/pkg/apis/serving/v1beta1"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
 )
 
 // nolint:unused
@@ -61,18 +62,16 @@ var _ webhook.CustomDefaulter = &InferenceServiceCustomDefaulter{}
 // Default implements webhook.CustomDefaulter so a webhook will be registered for the Kind InferenceService.
 func (d *InferenceServiceCustomDefaulter) Default(ctx context.Context, obj runtime.Object) error {
 	inferenceservice, ok := obj.(*kservev1beta1.InferenceService)
-
 	if !ok {
 		return fmt.Errorf("expected an InferenceService object but got %T", obj)
 	}
 	inferenceservicelog.Info("Defaulting for InferenceService", "name", inferenceservice.GetName())
 
-	// 如果存在 Transformer spec，注入测试容器
 	if inferenceservice.Spec.Transformer != nil {
-		// 检查是否已存在 test-transformer 容器
+		// Check if test-transformer container already exists
 		for _, container := range inferenceservice.Spec.Transformer.PodSpec.Containers {
 			if container.Name == "test-transformer" {
-				return nil // 已存在则直接返回
+				return nil
 			}
 		}
 
@@ -80,14 +79,29 @@ func (d *InferenceServiceCustomDefaulter) Default(ctx context.Context, obj runti
 			"namespace", inferenceservice.Namespace,
 			"name", inferenceservice.Name)
 
-		// 添加测试用的 nginx 容器
+		// Add test nginx container with improved configuration
 		container := corev1.Container{
 			Name:  "test-transformer",
-			Image: "nginx:latest",
+			Image: "nginx:alpine", // Using alpine for smaller footprint
 			Ports: []corev1.ContainerPort{
 				{
-					ContainerPort: 80,
+					ContainerPort: 8080,
 					Protocol:      corev1.ProtocolTCP,
+				},
+			},
+			Command: []string{
+				"nginx",
+				"-g",
+				"daemon off;",
+			},
+			Resources: corev1.ResourceRequirements{
+				Requests: corev1.ResourceList{
+					corev1.ResourceCPU:    resource.MustParse("100m"),
+					corev1.ResourceMemory: resource.MustParse("100Mi"),
+				},
+				Limits: corev1.ResourceList{
+					corev1.ResourceCPU:    resource.MustParse("200m"),
+					corev1.ResourceMemory: resource.MustParse("200Mi"),
 				},
 			},
 		}
