@@ -4,7 +4,8 @@ metadata:
   name: example-transformer
   namespace: default
   annotations:
-    serving.kserve.io/deploymentMode: RawDeployment  # 添加此注解
+    serving.kserve.io/deploymentMode: RawDeployment    # 使用原始部署模式
+    serving.kserve.io/skip-transformer-args: "true"     # 跳过 transformer 参数注入
 spec:
   predictor:
     containers:
@@ -33,12 +34,8 @@ spec:
         image: nginx:alpine
         ports:
           - containerPort: 80
-        command: ["/bin/sh"]
-        args: 
-          - "-c"
-          - |
-            sed -i 's/listen.*80;/listen 8080;/' /etc/nginx/conf.d/default.conf && 
-            nginx -g 'daemon off;'
+        command: ["/docker-entrypoint.sh"]
+        args: ["nginx", "-g", "daemon off;"]
         resources:
           requests:
             cpu: 100m

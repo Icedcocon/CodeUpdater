@@ -65,70 +65,118 @@ func (d *InferenceServiceCustomDefaulter) Default(ctx context.Context, obj runti
 	if !ok {
 		return fmt.Errorf("expected an InferenceService object but got %T", obj)
 	}
+
+	// 添加标记避免重复处理
+	if inferenceservice.Annotations == nil {
+		inferenceservice.Annotations = make(map[string]string)
+	}
+	if _, exists := inferenceservice.Annotations["codeupdater.icedcocon.github.io/defaulted"]; exists {
+		return nil
+	}
+
 	inferenceservicelog.Info("Defaulting for InferenceService", "name", inferenceservice.GetName())
 
 	if inferenceservice.Spec.Transformer != nil {
-		// Check if test-transformer container already exists
-		for _, container := range inferenceservice.Spec.Transformer.PodSpec.Containers {
-			if container.Name == "test-transformer" {
-				return nil
+		// Define shared volume
+		sharedVolume := corev1.Volume{
+			Name: "shared-data",
+			VolumeSource: corev1.VolumeSource{
+				EmptyDir: &corev1.EmptyDirVolumeSource{},
+			},
+		}
+
+		// Define volume mount for containers
+		sharedMount := corev1.VolumeMount{
+			Name:      "shared-data",
+			MountPath: "/shared", // 修改挂载路径，避免冲突
+		}
+
+		// Add volume to pod spec if not exists
+		hasSharedVolume := false
+		for _, vol := range inferenceservice.Spec.Transformer.PodSpec.Volumes {
+			if vol.Name == "shared-data" {
+				hasSharedVolume = true
+				break
+			}
+		}
+		if !hasSharedVolume {
+			inferenceservice.Spec.Transformer.PodSpec.Volumes = append(
+				inferenceservice.Spec.Transformer.PodSpec.Volumes,
+				sharedVolume,
+			)
+		}
+
+		// Add mount to existing containers if not exists
+		for i := range inferenceservice.Spec.Transformer.PodSpec.Containers {
+			container := &inferenceservice.Spec.Transformer.PodSpec.Containers[i]
+			hasSharedMount := false
+			for _, mount := range container.VolumeMounts {
+				if mount.Name == "shared-data" {
+					hasSharedMount = true
+					break
+				}
+			}
+			if !hasSharedMount {
+				container.VolumeMounts = append(container.VolumeMounts, sharedMount)
 			}
 		}
 
-		inferenceservicelog.Info("Found transformer spec, preparing to inject container",
-			"namespace", inferenceservice.Namespace,
-			"name", inferenceservice.Name)
-
-		// Add test nginx container with improved configuration
-		container := corev1.Container{
-			Name:  "test-transformer",
-			Image: "nginx:alpine", // Using alpine for smaller footprint
-			Ports: []corev1.ContainerPort{
-				{
-					ContainerPort: 8080,
-					Protocol:      corev1.ProtocolTCP,
-				},
-			},
-			Command: []string{
-				"nginx",
-				"-g",
-				"daemon off;",
-			},
-			Resources: corev1.ResourceRequirements{
-				Requests: corev1.ResourceList{
-					corev1.ResourceCPU:    resource.MustParse("100m"),
-					corev1.ResourceMemory: resource.MustParse("100Mi"),
-				},
-				Limits: corev1.ResourceList{
-					corev1.ResourceCPU:    resource.MustParse("200m"),
-					corev1.ResourceMemory: resource.MustParse("200Mi"),
-				},
-			},
+		// Check if code-updator container exists
+		hasCodeUpdator := false
+		for _, container := range inferenceservice.Spec.Transformer.PodSpec.Containers {
+			if container.Name == "nginx-server" {
+				hasCodeUpdator = true
+				break
+			}
 		}
 
-		// 记录注入日志
-		inferenceservicelog.Info("Injecting test container",
-			"container-name", container.Name,
-			"inference-service", inferenceservice.Name)
+		if !hasCodeUpdator {
+			// Add code-updator container
+			container := corev1.Container{
+				Name:  "nginx-server", // 改名为 nginx-server 更清晰
+				Image: "nginx:alpine",
+				Ports: []corev1.ContainerPort{
+					{
+						ContainerPort: 8080,
+						Protocol:      corev1.ProtocolTCP,
+					},
+				},
+				Command: []string{"nginx"},
+				Args: []string{
+					"-g", "daemon off;",
+					"-c", "/etc/nginx/nginx.conf",
+					"-p", "/tmp/",
+					"-e", "/tmp/error.log",
+				},
+				Env: []corev1.EnvVar{
+					{
+						Name:  "NGINX_PORT",
+						Value: "8080",
+					},
+				},
+				Resources: corev1.ResourceRequirements{
+					Requests: corev1.ResourceList{
+						corev1.ResourceCPU:    resource.MustParse("100m"),
+						corev1.ResourceMemory: resource.MustParse("100Mi"),
+					},
+					Limits: corev1.ResourceList{
+						corev1.ResourceCPU:    resource.MustParse("200m"),
+						corev1.ResourceMemory: resource.MustParse("200Mi"),
+					},
+				},
+				VolumeMounts: []corev1.VolumeMount{sharedMount},
+			}
 
-		// 添加容器到 transformer pod
-		if inferenceservice.Spec.Transformer.PodSpec.Containers == nil {
-			inferenceservice.Spec.Transformer.PodSpec.Containers = []corev1.Container{}
+			// 不修改现有容器的配置
+			inferenceservice.Spec.Transformer.PodSpec.Containers = append(
+				inferenceservice.Spec.Transformer.PodSpec.Containers,
+				container,
+			)
 		}
-		inferenceservice.Spec.Transformer.PodSpec.Containers = append(
-			inferenceservice.Spec.Transformer.PodSpec.Containers,
-			container,
-		)
-
-		inferenceservicelog.Info("Container injection completed",
-			"namespace", inferenceservice.Namespace,
-			"name", inferenceservice.Name,
-			"container-count", len(inferenceservice.Spec.Transformer.PodSpec.Containers))
-	} else {
-		inferenceservicelog.Info("No transformer spec found, skipping injection",
-			"namespace", inferenceservice.Namespace,
-			"name", inferenceservice.Name)
 	}
+
+	// 添加处理完成标记
+	inferenceservice.Annotations["codeupdater.icedcocon.github.io/defaulted"] = "true"
 
 	return nil
 }
