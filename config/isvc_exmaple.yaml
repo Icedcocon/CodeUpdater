@@ -34,8 +34,12 @@ spec:
         image: nginx:alpine
         ports:
           - containerPort: 80
-        command: ["/docker-entrypoint.sh"]
-        args: ["nginx", "-g", "daemon off;"]
+        command: ["/bin/sh"]
+        args: 
+          - "-c"
+          - |
+            /docker-entrypoint.sh nginx -g 'daemon off;' &    # 后台运行 nginx
+            while true; do sleep 86400; done                  # 保持容器运行
         resources:
           requests:
             cpu: 100m
